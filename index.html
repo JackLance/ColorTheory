@@ -1,0 +1,507 @@
+<!doctype html>
+<html>
+<head>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+</head>
+<body>
+<canvas id="myCanvas" width="1000" height="600" style="border:6px solid #f0f;"></canvas>
+<div style="font-family:verdana;">
+
+</div>
+</body>
+
+<script>
+const canvas = document.getElementById("myCanvas");
+const ctx = canvas.getContext("2d");
+
+
+dots = []
+
+document.addEventListener('contextmenu', event => event.preventDefault());
+
+canvas.onclick = onClick
+$('body').keydown(onKey)
+$('body').mousemove(update)
+rad = 5
+
+active = undefined
+current = "dot"
+feedback = "Class, please quiet down. I know you all hate group work, so I have an individual assignment for you all today: Draw dots by clicking around the canvas. You can switch to various colors of lines to draw between the dots (by clicking the buttons on the left or pressing the respective key). Right click and drag to erase any mistakes you make. When you are finished with your piece, press enter or click submit to recieve feedback.";
+
+buttons = [{x:10, y:20, key:"q", code:81, txt:"dot", f:()=>{current = "dot"; active = undefined;}, active:true},
+		   {x:10, y:90, key:'1', code:49, txt:"blue arrow", f:()=>{current = 'blue'; active = undefined}},
+		   {x:10, y:160, key:'2', code: 50, txt:"red arrow", f:()=>{current = 'red'; active = undefined}},
+		   {x:10, y:230, key:'3', code: 51, txt:"green arrow", f:()=>{current = 'green'; active = undefined}},
+		   {x:10, y:300, key:'4', code: 51, txt:"yellow arrow", f:()=>{current = 'yellow'; active = undefined}},
+		   {x:10, y:530, key:'enter', code: 13, txt:"submit", f:submit}]
+
+//setInterval(update, 100);
+
+function drawCircle(x, y, col){
+	ctx.fillStyle = col;
+	if(!col) ctx.fillStyle = 'black'
+	ctx.beginPath();
+    ctx.arc(x, y, rad, 0, 2 * Math.PI, false);
+    ctx.fill();
+}
+
+function drawLine(x, y, x2, y2){
+	ctx.beginPath();
+	ctx.moveTo(x, y);
+	ctx.lineTo(x2, y2);
+	ctx.stroke(); 
+}
+
+function drawArrow(x, y, x2, y2, col){
+	ctx.strokeStyle = col
+	ctx.fillStyle = col
+
+	ctx.lineWidth = 2;
+	drawLine(x, y, x2, y2);
+	dx = x-x2;
+	dy = y-y2;
+	dist = Math.sqrt(dx*dx + dy*dy)
+	mult = 10/dist;
+	x3 = x2+dx*mult+dy*mult;
+	y3 = y2-dx*mult+dy*mult;
+	x4 = x2+dx*mult-dy*mult;
+	y4 = y2+dx*mult+dy*mult
+	ctx.beginPath();
+	ctx.moveTo(x2, y2);
+	ctx.lineTo(x3, y3);
+	ctx.lineTo(x4, y4);
+	ctx.lineTo(x2, y2);
+	ctx.fill(); 
+}
+
+function incomplete(){
+	if(dots.length < 2) return true;
+	return false;
+}
+
+function dfs(dot){
+	if(dot.seen) return;
+	dot.seen = true;
+	dot.to.forEach(other => dfs(other.dot));
+	dot.from.forEach(other => dfs(other.dot));
+}
+
+function connected(){
+	dots.forEach(dot => {dot.seen = false});
+	dfs(dots[0]);
+	conn = true;
+	dots.forEach(dot => {if(!dot.seen) conn = false})
+	return conn;
+}
+
+function palette(){
+	colors = [];
+	dots[0].to.forEach(other => colors.push(other.col));
+	fail = false;
+	dots.forEach(dot => {
+		colors2 = [];
+		dot.to.forEach(other => colors2.push(other.col));
+		colors.forEach(col => {if(!colors2.includes(col)) fail = col})
+		colors2.forEach(col => {if(!colors.includes(col)) fail = col})
+
+	})
+	return fail
+}
+
+function collision(){
+	fail = false;
+	dots.forEach(dot => {
+		colors = [];
+		dot.from.forEach(other => {
+			if(colors.includes(other.col)) fail = other.col;
+			colors.push(other.col);
+		})
+	})
+	return fail;
+}
+
+function overlap(){
+	fail = false;
+	dots.forEach(dot => {
+		dot.to.forEach(other => {
+			other.dot.to.forEach(otherother => {if(otherother.dot == dot) fail = true})
+
+		})
+	})
+	return fail;
+}
+
+function follow(dot, col){
+	for(let other of dot.to){
+		if(other.col == col) return other.dot;
+	}
+}
+
+function revfollow(dot, col){
+	for(let other of dot.from){
+		if(other.col == col) return other.dot;
+	}
+}
+
+function label(dot, colors, ind){
+	for(var i = ind; i<colors.length; i++){
+		col = colors[i]
+		nxt = follow(dot, col);
+		if(!nxt.label){
+			nxt.label = dot.label + "," + col;
+			label(nxt, colors, i);
+		}
+	}
+}
+
+function revlabel(dot, colors, ind){
+	for(var i = ind; i<colors.length; i++){
+		col = colors[i]
+		nxt = revfollow(dot, col);
+		if(!nxt.revlabel){
+			nxt.revlabel = col + "," + dot.revlabel;
+			revlabel(nxt, colors, i);
+		}
+	}
+}
+
+function makeLabelEdgeSets(dot, colors){
+	dots.forEach(dot => {dot.label = undefined; dot.revlabel = undefined})
+	dot.label = "*";
+	dot.revlabel = "*";
+	label(dot, colors, 0);
+	revlabel(dot, colors, 0);
+	edgesx = [];
+	dots.forEach(dotx => {
+		console.assert(dotx.label)
+		console.assert(dotx.revlabel)
+
+		dotx.to.forEach(other => {
+			edgesx.push(dotx.label + ","+ other.col + "," + other.dot.revlabel)
+		})
+	})
+	return edgesx;
+}
+
+function symmetry(){
+	colors = [];
+	dots[0].to.forEach(other => colors.push(other.col));
+	fail = false;
+	colors.forEach(col => {
+		val = undefined;
+		dots.forEach(dot => {
+			cnt = 0;
+			pnt = dot;
+			while(cnt == 0 || pnt != dot){
+				pnt = follow(pnt, col);
+				cnt++;
+			}	
+			if(!val) val = cnt;
+			else if(val != cnt){
+				fail = {col:col, val:val, val2:cnt};
+			}
+	})})
+	if(fail) return fail;
+	edges = makeLabelEdgeSets(dots[0], colors);
+	colors.forEach(col => {
+		edges2 = makeLabelEdgeSets(follow(dots[0], col), colors);
+		edges.forEach(e => {if(!edges2.includes(e)) {
+			if(!fail || fail.ans.length > e.length) fail = {ans:e}
+
+		}})
+	})
+	return fail;
+}
+
+function monochromatic(){
+	if(dots[0].to.length == 1) return true;
+}
+
+function textfromlist(list){
+	arr = list.split(',');
+	txt = ""
+	for(var i=1; i<arr.length-2; i++){
+		txt += "a "
+		txt += arr[i];
+		txt += " line, "
+	};
+	txt += "and then a " + arr[arr.length-2] + " line"
+	return txt;
+}
+
+function abelian(){
+	
+	colors = [];
+	dots[0].to.forEach(other => colors.push(other.col));
+	ans = [colors[0], colors[1]];
+	colors.forEach(col1 => {
+		colors.forEach(col2 => {
+			if(follow(follow(dots[0], col1), col2) != follow(follow(dots[0], col2), col1)){
+				ans = false;
+			}
+		})
+	})
+	return ans;
+}
+
+function even(){
+	return dots.length %2 == 0
+}
+
+function dfscolor(dot, col){
+	if(dot.seen) return;
+	dot.seen = true;
+	dfscolor(follow(dot, col), col)
+}
+
+function useless(){
+	colors = [];
+	dots[0].to.forEach(other => colors.push(other.col));
+	use = false;
+	colors.forEach(col1 => {
+		colors.forEach(col2 => {
+			dots.forEach(dot => {dot.seen = false});
+			dfscolor(dots[0], col1);
+			if(col1 == col2) return;
+			if(follow(dots[0], col2).seen){
+				use = col2;
+			}
+		})
+	})
+	return use;
+}
+
+function submit(){
+	if(incomplete()){
+		feedback = "You clearly did not put any effort into this assignment. Please resubmit. 0%";
+	}else if(!connected()){
+		feedback = "In a good composition, remember that there should always be something that leads your eye around the canvas. Right now there are different parts of your painting which seem totally disconnected from each other. I'm sorry, but the most I can give this work is a 10%";
+	}else if(palette()){
+		feedback = "Your color pallete is quite inconsistent, which makes the style of the piece feel too discordant. You have " + palette() + " emanating from some places, but not from others. Fix and resubmit for a regrade if you want more than 20%"
+	}else if(collision()){
+		feedback = "Make sure your detail work doesn't get too cluttered. You have one point right now with multiple " + collision() + " strokes that end there so it's hard for the viewer to discern what they're seeing there. Still major improvement needed. I give this piece a 30%"
+	}else if(overlap()){
+		feedback = "I like the creativity I'm seeing here, but it's a bit of a mess right now. You have some brushstrokes in the exact same place as others, just in the opposite direction which is visually noisy. I recommend you clarify your ideas or I'm afraid I can't grade this very high. 40%"
+	}else if(symmetry()){
+		x = symmetry();
+		
+		feedback = "";
+		feedback = "Alright, this is not awful! It's just... your piece seems lopsided? This takes a bit of artistic intuition for what it means to feel symmetrical, but I'll try to explain:"
+		if(x.val2) feedback += " If I look at some places in your painting and follow " + x.col + " lines " + x.val + " times, I get back to where I started, but other places it takes " + x.val2 + " times to get back where I started. "
+		else feedback += " If I look at some places in your painting and follow " + textfromlist(x.ans) + ", I get back to where I started, but other places following the same pattern, I don't.";
+		feedback += " I hope that makes sense. You're getting there! If you get this down you should see major improvement. For now, you get a 50% "
+	}else if(monochromatic()){
+		feedback = "It's pretty bland, could you use more than just one color? Nearly passable now. I'll give this a 60%"
+	}else if(useless()){
+		feedback = "In your art, every brush stroke should be important! Right now even if all the " + useless() + " was removed, you'd still have a connected painting. Don't just add more color because I said to; Everything should add something to the piece. I'll give you a 70% for effort."
+	}else if(abelian()){
+		a = abelian();
+		feedback = "Great job! It's really coming together! If you've never taken \"this class\" before, you should consider this an achievement! Something that could be improved however is that it feels very rigid and square right now. To demonstrate what I mean... notice that following a " + a[0] + " line and then a " + a[1] + " one is always the same result as doing that in the opposite order, so it feels sort of  like it's just lots of lattice shapes everywhere. Great work so far. 80%"
+	}else if(even()){
+		feedback = "Awesome, It's really starting to come together! One last note: Even numbers can feel a little \"too perfect\", like a completely symmetrical face. If you had an odd number of dots, it would add a little flair to the piece. If you fix this, I'll give you full credit, but for now you get a 90%"
+	}else{
+		feedback = "100%"
+	}
+	draw();
+}
+
+function draw(e){
+	//consol
+	ctx.clearRect(0,0,1000,1000);
+	
+	dots.forEach(dot => {
+		if(active == dot){
+			drawCircle(dot.x, dot.y, 'red')
+		}else{
+			drawCircle(dot.x, dot.y, 'black')
+		}
+
+	})
+
+	dots.forEach(dot => {
+
+		dot.to.forEach(other => {
+			drawArrow(dot.x, dot.y, other.dot.x, other.dot.y, other.col);
+		})
+	})
+
+	buttons.forEach(button => {
+		ctx.fillStyle = "#444444"
+		ctx.fillRect(button.x-2, button.y+4, 150, 50);
+		
+		if(button.active) ctx.fillStyle = "#cc99cc"
+		else ctx.fillStyle = "#888888";
+		ctx.fillRect(button.x, button.y, 150, 50);
+		ctx.fillStyle = "black"
+		ctx.font = "15pt Verdana";
+		if(button.txt == "dot"){
+			ctx.fillText("(" + button.key+")  ", button.x+25, button.y+32)
+			drawCircle(button.x+90, button.y+25, rad)
+		}
+		if(button.txt == "blue arrow"){
+			ctx.fillText("(" + button.key+")  ", button.x+25, button.y+32)
+			ctx.strokeStyle = "blue";
+			drawLine(button.x+70, button.y+25, button.x+110, button.y+25)
+		}
+		if(button.txt == "red arrow"){
+			ctx.fillText("(" + button.key+")  ", button.x+25, button.y+32)
+			ctx.strokeStyle = "red";
+			drawLine(button.x+70, button.y+25, button.x+110, button.y+25)
+		}
+		if(button.txt == "green arrow"){
+			ctx.fillText("(" + button.key+")  ", button.x+25, button.y+32)
+			ctx.strokeStyle = "green";
+			drawLine(button.x+70, button.y+25, button.x+110, button.y+25)
+		}
+		if(button.txt == "yellow arrow"){
+			ctx.fillText("(" + button.key+")  ", button.x+25, button.y+32)
+			ctx.strokeStyle = "yellow";
+			drawLine(button.x+70, button.y+25, button.x+110, button.y+25)
+		}
+		if(button.txt == "submit"){
+			ctx.font = "13pt Verdana";
+			ctx.fillText("(" + button.key+")  SUBMIT", button.x+5, button.y+32)
+		}
+	})
+
+	$('div').text(feedback, 200,500)
+
+	if(e && active && current != "dot") drawArrow(active.x, active.y, e.offsetX, e.offsetY, current);
+	
+}
+
+function clickButton(butt){
+	butt.f();
+	if(butt.txt != 'submit') {
+		buttons.forEach(x => {x.active = false})
+		butt.active = true;
+	}
+	foundOne = true;
+}
+
+function onClick(e){
+	if(e.buttons == 2){
+		erase(e);
+		active = undefined;
+		return;
+	}
+	foundOne = false;
+	active = undefined;
+	buttons.forEach(button => {
+		if(e.offsetX > button.x && e.offsetX < button.x+150 && e.offsetY > button.y && e.offsetY < button.y+50){
+			clickButton(button)
+		}
+	})
+	if(foundOne) return;
+	dots.forEach(dot => {
+		if((e.offsetX - dot.x)*(e.offsetX - dot.x) + (e.offsetY - dot.y)*(e.offsetY - dot.y) < rad * rad){
+			if(current != 'dot'){
+				if(active == dot){
+					active = undefined;
+				}
+				else{
+					active = dot;
+				}
+			}
+			foundOne = true;
+		}
+	})
+	if(!foundOne && current == "dot") {
+
+		dots.push({x:e.offsetX, y:e.offsetY, to:[], from:[]});
+	}
+	
+	setTimeout(() => draw(e));
+};
+
+function onKey(e){
+	buttons.forEach(button=>{
+
+		if(e.keyCode == button.code){
+			clickButton(button);
+		}
+	})
+	draw();
+}
+
+function remove(arr, el){
+	arr = arr.filter(x => {return x != el})
+	return arr;
+}
+
+function erase(e){
+	dots.forEach(dot => {
+		if((e.offsetX - dot.x)*(e.offsetX - dot.x) + (e.offsetY - dot.y)*(e.offsetY - dot.y) < rad * rad){
+			dots = remove(dots, dot);
+			dots.forEach(other => {
+				other.to.forEach(otherother =>{
+					if(otherother.dot == dot) other.to = remove(other.to, otherother);
+				})
+				other.from.forEach(otherother =>{
+					if(otherother.dot == dot) other.from = remove(other.from, otherother);
+				})
+			})
+		}
+	})
+	dots.forEach(dot => {
+		dot.to.forEach(edge => {
+			x = e.offsetX;
+			y = e.offsetY;
+			x1 = dot.x;
+			y1 = dot.y;
+			x2 = edge.dot.x;
+			y2 = edge.dot.y;
+			norm = ((x-x1)*(x2-x1)+(y-y1)*(y2-y1)) / ((x1-x2)*(x1-x2) + (y1-y2)*(y1-y2))
+			projx = x1 + (x2-x1) * norm
+			projy = y1 + (y2-y1) * norm
+			if((x - projx)*(x - projx) + (y-projy)*(y-projy) < rad * rad && ((x2 > x) != (x1 > x))){
+				dot.to = remove(dot.to, edge);
+			}
+		})
+		dot.from.forEach(edge => {
+			x = e.offsetX;
+			y = e.offsetY;
+			x1 = dot.x;
+			y1 = dot.y;
+			x2 = edge.dot.x;
+			y2 = edge.dot.y;
+			norm = ((x-x1)*(x2-x1)+(y-y1)*(y2-y1)) / ((x1-x2)*(x1-x2) + (y1-y2)*(y1-y2))
+			projx = x1 + (x2-x1) * norm
+			projy = y1 + (y2-y1) * norm
+			if((x - projx)*(x - projx) + (y-projy)*(y-projy) < rad * rad&& ((x2 > x) != (x1 > x))){
+				dot.from = remove(dot.from, edge);
+			}
+		})
+	})
+}
+
+
+function update(e){
+	if(e.buttons == 2){
+		erase(e);
+		active = undefined;
+	}
+	if(active){
+		dots.forEach(dot => {
+			if(current == "dot") return;
+			if(dot == active) return;
+			if((e.offsetX - dot.x)*(e.offsetX - dot.x) + (e.offsetY - dot.y)*(e.offsetY - dot.y) < rad * rad){
+				for(var i=0; i<active.to.length; i++){
+					if(active.to[i].dot == dot) return;
+				}
+				active.to.push({dot: dot,col: current});
+				dot.from.push({dot: active, col: current})
+				active = dot;
+			}
+		})
+	}
+	draw(e);
+}
+
+draw();
+</script>
+
+
+
+
+</html>
